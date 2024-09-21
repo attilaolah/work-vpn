@@ -52,3 +52,19 @@ export BW_SESSION=...
 export OPENVPN_BW_ID=...
 export OPENVPN_CHALLENGE_PREFIX=...
 ```
+
+To rename the script when using `direnv`, add a simple shell script wrapper to
+`devshells.<name>.buildInputs` that forwards its arguments (`$@`), like so:
+
+```nix
+devShells.default = pkgs.mkShell {
+  buildInputs = with pkgs; let
+    ovpn = writeShellScriptBin "ovpn" ''
+      ${lib.getExe work-vpn.packages.${system}.default} $@
+    '';
+  in [
+    ovpn
+    ...
+  ];
+};
+```
