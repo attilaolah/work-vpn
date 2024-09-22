@@ -1,5 +1,8 @@
 # OpenVPN 4 Work
 
+![GitHub Checks](https://img.shields.io/github/check-runs/attilaolah/work-vpn/main)
+[![Renovate](https://img.shields.io/badge/renovate-enabled-brightgreen.svg)](https://mend.io/renovate)
+
 This repo contains a Nix flake for seamlessly connecting to an OpenVPN server
 using credentials stored in BitWarden. All dependencies, including the OpenVPN
 and the BitWarden CLI, are flake dependencies; to use it, simply add this flake
