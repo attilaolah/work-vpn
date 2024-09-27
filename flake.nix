@@ -75,8 +75,8 @@
 
             # Ensure RBW is logged in.
             if ! ${rbw} login; then
-              ${echo} "Bitwarden login failed. Make sure \`rbw\` is installed and the"
-              ${echo} "\`rbw-agent\` is running. Type \`rbw login\` to get started."
+              ${echo} "Bitwarden login failed. Make sure \`rbw\` is installed and the \`rbw-agent\`"
+              ${echo} "is running. Install \`rbw\` and type \`rbw login\` to get started."
               exit 3
             fi
 
