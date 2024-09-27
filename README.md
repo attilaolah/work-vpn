@@ -11,10 +11,8 @@ to your flake inputs.
 The script exports a binary called `work-vpn` in its default package, which
 depends on a few environment variables:
 
-- `BW_SESSION`: A BitWarden Session key, which can be obtained by running `bw
-  login`.
-- `OPENVPN_BW_ID`: The ID of the BitWarden secret in which the credentials are
-  stored.
+- `OPENVPN_BW_ID`: The ID or name of the BitWarden secret in which the
+  credentials are stored.
 - `OPENVPN_URL`: URL of the OpenVPN server to connect to.
 - `OPENVPN_URL_STAGE`: Alternative URL to connect to when using the `-s` or
   `--staging` flag.
@@ -51,7 +49,6 @@ dotenv_if_exists .env.local
 ### `.env.local`
 
 ```sh
-export BW_SESSION=...
 export OPENVPN_BW_ID=...
 export OPENVPN_CHALLENGE_PREFIX=...
 ```
