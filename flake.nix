@@ -13,14 +13,13 @@
         packages.default = with pkgs.lib; let
           ask-password = getExe' pkgs.systemd "systemd-tty-ask-password-agent";
           bc = getExe pkgs.bc;
-          bw = getExe pkgs.bitwarden-cli;
           cat = getExe' pkgs.coreutils "cat";
           echo = getExe' pkgs.coreutils "echo";
           grep = getExe pkgs.gnugrep;
-          jq = getExe pkgs.jq;
           mkfifo = getExe' pkgs.coreutils "mkfifo";
           mktemp = getExe' pkgs.coreutils "mktemp";
           openvpn = getExe pkgs.openvpn;
+          rbw = getExe pkgs.rbw;
           reply-password = "${pkgs.systemd}/lib/systemd/systemd-reply-password";
           rm = getExe' pkgs.coreutils "rm";
           rmdir = getExe' pkgs.coreutils "rmdir";
@@ -66,19 +65,19 @@
               esac
             done
 
-            # Ensure BitWarden is logged in.
-            if [ -z "''\${BW_SESSION:-}:" ]; then
-              ${echo} "BW_SESSION environment variable is not set."
-              ${echo} "Run \`bw login\` to acquire a session ID and re-run this command."
-              exit 1
-            fi
-
-            # BitWarden credentials identifier.
+            # Bitwarden credentials identifier.
             # This is where the VPN username & password are stored.
             if [ -z "''\${OPENVPN_BW_ID:-}" ]; then
               ${echo} "OPENVPN_BW_ID environment variable is not set."
-              ${echo} "Store work credentials in BitWarden and set the UUID in \`.env.local\`."
-              exit 1
+              ${echo} "Store work credentials in Bitwarden and set the UUID in \`.env.local\`."
+              exit 2
+            fi
+
+            # Ensure RBW is logged in.
+            if ! ${rbw} login; then
+              ${echo} "Bitwarden login failed. Make sure \`rbw\` is installed and the \`rbw-agent\`"
+              ${echo} "is running. Install \`rbw\` and type \`rbw login\` to get started."
+              exit 3
             fi
 
             if [ "''\${staging:-}" = true ]; then
@@ -91,37 +90,13 @@
               VERB=0
             fi
 
-            # Extract OpenVPN username & password.
-            ${echo} "BitWarden: extracting username..."
-            USER="$(${bw} get item $OPENVPN_BW_ID | ${jq} -r .login.username)"
-            ${echo} "BitWarden: extracting password..."
-            PASS="$(${bw} get item $OPENVPN_BW_ID | ${jq} -r .login.password)"
-
-            # Extract OpenVPN CA.
-            # It should be saved in BitWarden under the openvpn_client_key field.
-            ${echo} "BitWarden: extracting certificate authority..."
-            OPENVPN_CA="$(
-              ${bw} get item $OPENVPN_BW_ID |
-                ${jq} -r '.fields[] | select(.name == "openvpn_ca").value' |
-                ${tr} ' ' \\n
-            )"
-
-            # Extract OpenVPN TLS client key.
-            # It should be saved in BitWarden under the openvpn_client_key field.
-            ${echo} "BitWarden: extracting client key..."
-            OPENVPN_TLS_CLIENT_KEY="$(
-              ${bw} get item $OPENVPN_BW_ID |
-                ${jq} -r '.fields[] | select(.name == "openvpn_tls_client_key").value' |
-                ${tr} ' ' \\n
-            )"
-
             CREDS_DIR="$(${mktemp} --directory)"
             CREDS_FIFO="$CREDS_DIR/credentials"
             ${mkfifo} --mode=600 "$CREDS_FIFO"
 
             cat <<EOF >$CREDS_FIFO &
-            $USER
-            $PASS
+            $(${rbw} get $OPENVPN_BW_ID --field username)
+            $(${rbw} get $OPENVPN_BW_ID --field password)
             EOF
             CREDS_PID=$!
 
@@ -162,15 +137,26 @@
 
             # Access Server:
             verify-x509-name "CN=OpenVPN Server"
+
+            # OpenVPN CA.
+            # It should be saved in Bitwarden under the openvpn_client_key field.
             <ca>
             -----BEGIN CERTIFICATE-----
-            $OPENVPN_CA
+            $(
+              ${rbw} get $OPENVPN_BW_ID --field openvpn_ca |
+                ${tr} ' ' \\n
+            )
             -----END CERTIFICATE-----
             </ca>
 
+            # OpenVPN TLS client key.
+            # It should be saved in Bitwarden under the openvpn_client_key field.
             <tls-crypt-v2>
             -----BEGIN OpenVPN tls-crypt-v2 client key-----
-            $OPENVPN_TLS_CLIENT_KEY
+            $(
+              ${rbw} get $OPENVPN_BW_ID --field openvpn_tls_client_key |
+                ${tr} ' ' \\n
+            )
             -----END OpenVPN tls-crypt-v2 client key-----
             </tls-crypt-v2>
             EOF
