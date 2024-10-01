@@ -80,6 +80,12 @@
               exit 3
             fi
 
+            # Ensure RBW is unlocked.
+            if ! ${rbw} unlock; then
+              ${echo} "Bitwarden unlock failed. Try unlocking manually by running \`rbw unlock\`."
+              exit 4
+            fi
+
             if [ "''\${staging:-}" = true ]; then
                 OPENVPN_URL="$OPENVPN_URL_STAGE"
             fi
