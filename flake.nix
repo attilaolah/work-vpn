@@ -9,7 +9,29 @@
   outputs = inputs @ {flake-parts, ...}:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = ["x86_64-linux"];
-      perSystem = {pkgs, ...}: {
+      perSystem = {pkgs, ...}: let
+        updown = pkgs.writeShellApplication {
+          name = "work-vpn-up-down";
+          runtimeInputs = with pkgs; [openvpn systemd update-resolv-conf];
+          text = ''
+            if [ "''$(systemctl is-active systemd-resolved)" = "active" ]; then
+              "${pkgs.openvpn}/libexec/update-systemd-resolved" "$@"
+              result="$?"
+
+              if [ "''${script_type:-}" = "up" ] && [ -n "''${dev:-}" ]; then
+                # Disable DNS-over-TLS & DNSSEC for this interface.
+                resolvectl dnsovertls "''${dev}" no
+                resolvectl dnssec "''${dev}" no
+              fi
+
+              exit "$result"
+            fi
+
+            # No active systemd-resolved, assume resolv-conf.
+            exec "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf" "$@"
+          '';
+        };
+      in {
         packages.default = pkgs.writeShellApplication {
           name = "work-vpn";
           runtimeInputs = with pkgs; [
@@ -20,7 +42,7 @@
             openvpn
             rbw
             systemd
-            update-resolv-conf
+            updown
           ];
           text = ''
             set -euo pipefail
@@ -68,7 +90,7 @@
 
             # Bitwarden credentials identifier.
             # This is where the VPN username & password are stored.
-            if [ -z "''\${OPENVPN_BW_ID:-}" ]; then
+            if [ -z "''${OPENVPN_BW_ID:-}" ]; then
               echo "OPENVPN_BW_ID environment variable is not set."
               echo "Store work credentials in Bitwarden and set the UUID in \`.env.local\`."
               exit 2
@@ -87,11 +109,11 @@
               exit 4
             fi
 
-            if [ "''\${staging:-}" = true ]; then
+            if [ "''${staging:-}" = true ]; then
                 OPENVPN_URL="$OPENVPN_URL_STAGE"
             fi
 
-            if [ "''\${verbose:-}" = true ]; then
+            if [ "''${verbose:-}" = true ]; then
               VERB=3
             else
               VERB=0
@@ -100,6 +122,8 @@
             CREDS_DIR="$(mktemp --directory)"
             CREDS_FIFO="$CREDS_DIR/credentials"
             mkfifo --mode=600 "$CREDS_FIFO"
+
+            UPDOWN="${pkgs.lib.getExe updown}"
 
             cat <<EOF >"$CREDS_FIFO" &
             $(rbw get "$OPENVPN_BW_ID" --field username)
@@ -136,10 +160,10 @@
             # Only used for debugging.
             verb $VERB
 
-            # Update resolv.conf when connected.
-            # Needed to get internal domains to resolve.
-            up "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"
-            down "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"
+            up "$UPDOWN"
+            down "$UPDOWN"
+            down-pre  # needed for systemd-resolved only
+
             script-security 2
 
             # Access Server:
