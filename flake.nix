@@ -10,48 +10,27 @@
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = ["x86_64-linux"];
       perSystem = {pkgs, ...}: let
-        # This script runs when the VPN connects with --resolved flag
-        resolvedUpScript = pkgs.writeShellScript "vpn-up-resolved.sh" ''
-          #!${pkgs.runtimeShell}
-          set -x
+        updown = pkgs.writeShellApplication {
+          name = "work-vpn-up-down";
+          runtimeInputs = with pkgs; [openvpn systemd update-resolv-conf];
+          text = ''
+            if [ "''$(systemctl is-active systemd-resolved)" = "active" ]; then
+              "${pkgs.openvpn}/libexec/update-systemd-resolved" "$@"
+              result="$?"
 
-          # This script configures a "split-DNS" setup.
-          # - Queries for the domains specified below will be sent to the VPN's DNS servers.
-          # - All other queries will use your system's primary, default DNS servers.
-          #
-          # By not setting this interface as the default route for DNS, we avoid
-          # sending all system traffic through the work VPN's DNS.
+              if [ "''${script_type:-}" = "up" ] && [ -n "''${dev:-}" ]; then
+                # Disable DNS-over-TLS & DNSSEC for this interface.
+                resolvectl dnsovertls "''${dev}" no
+                resolvectl dnssec "''${dev}" no
+              fi
 
-          # Collect all DNS servers and domains from OpenVPN env vars
-          dns_servers=""
-          dns_domains=""
-          for option in ''${!foreign_option_*}; do
-            value="''${!option}"
-            if [[ $value == "dhcp-option DNS "* ]]; then
-              dns_servers="$dns_servers ''${value#dhcp-option DNS }"
-            elif [[ $value == "dhcp-option DOMAIN "* ]]; then
-              # Add ~ prefix to mark domain for interface-based routing.
-              dns_domains="$dns_domains ~''${value#dhcp-option DOMAIN }"
+              exit "$result"
             fi
-          done
 
-          # 1. Set the DNS servers for the interface
-          ${pkgs.systemd}/bin/resolvectl dns "$dev" $dns_servers
-          # 2. Disable DNS-over-TLS for this interface
-          ${pkgs.systemd}/bin/resolvectl dnsovertls "$dev" no
-          # 3. Force DNSSEC OFF for this interface
-          ${pkgs.systemd}/bin/resolvectl dnssec "$dev" no
-          # 4. Set the domains for routing
-          ${pkgs.systemd}/bin/resolvectl domain "$dev" $dns_domains
-        '';
-
-        # This script runs when the VPN disconnects with --resolved flag
-        resolvedDownScript = pkgs.writeShellScript "vpn-down-resolved.sh" ''
-          #!${pkgs.runtimeShell}
-          set -x
-          # Cleanly revert all DNS changes made to the interface
-          ${pkgs.systemd}/bin/resolvectl revert "$dev"
-        '';
+            # No active systemd-resolved, assume resolv-conf.
+            exec "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf" "$@"
+          '';
+        };
       in {
         packages.default = pkgs.writeShellApplication {
           name = "work-vpn";
@@ -63,7 +42,7 @@
             openvpn
             rbw
             systemd
-            update-resolv-conf
+            updown
           ];
           text = ''
             set -euo pipefail
@@ -76,16 +55,12 @@
               PREFIX=""
             fi
 
-            use_resolved=false
-            while getopts ":vrs-:" opt; do
+            while getopts ":vs-:" opt; do
               case "$opt" in
                 v)
                   # Enable shell debugging.
                   set -x
                   verbose=true
-                  ;;
-                r)
-                  use_resolved=true
                   ;;
                 s)
                   staging=true
@@ -96,9 +71,6 @@
                       # Enable shell debugging.
                       set -x
                       verbose=true
-                      ;;
-                    resolved)
-                      use_resolved=true
                       ;;
                     staging)
                       staging=true
@@ -151,6 +123,8 @@
             CREDS_FIFO="$CREDS_DIR/credentials"
             mkfifo --mode=600 "$CREDS_FIFO"
 
+            UPDOWN="${pkgs.lib.getExe updown}"
+
             cat <<EOF >"$CREDS_FIFO" &
             $(rbw get "$OPENVPN_BW_ID" --field username)
             $(rbw get "$OPENVPN_BW_ID" --field password)
@@ -186,17 +160,10 @@
             # Only used for debugging.
             verb $VERB
 
-            $(
-              if [ "''${use_resolved:-}" = true ]; then
-                echo '# Update resolv.conf via systemd-resolved.'
-                echo 'up "${resolvedUpScript}"'
-                echo 'down "${resolvedDownScript}"'
-              else
-                echo '# Update resolv.conf when connected.'
-                echo 'up "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"'
-                echo 'down "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"'
-              fi
-            )
+            up "$UPDOWN"
+            down "$UPDOWN"
+            down-pre  # needed for systemd-resolved only
+
             script-security 2
 
             # Access Server:
