@@ -199,7 +199,7 @@
             )"
 
             echo "$RESPONSE" |
-              pkexec "${pkgs.systemd}/lib/systemd/systemd-reply-password" 1 "$SOCKET"
+              $PREFIX pkexec "${pkgs.systemd}/lib/systemd/systemd-reply-password" 1 "$SOCKET"
 
             # Give control back to the OpenVPN process:
             wait $START_PID
