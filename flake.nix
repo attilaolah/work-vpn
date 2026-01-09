@@ -9,7 +9,50 @@
   outputs = inputs @ {flake-parts, ...}:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = ["x86_64-linux"];
-      perSystem = {pkgs, ...}: {
+      perSystem = {pkgs, ...}: let
+        # This script runs when the VPN connects with --resolved flag
+        resolvedUpScript = pkgs.writeShellScript "vpn-up-resolved.sh" ''
+          #!${pkgs.runtimeShell}
+          set -x
+
+          # This script configures a "split-DNS" setup.
+          # - Queries for the domains specified below will be sent to the VPN's DNS servers.
+          # - All other queries will use your system's primary, default DNS servers.
+          #
+          # By not setting this interface as the default route for DNS, we avoid
+          # sending all system traffic through the work VPN's DNS.
+
+          # Collect all DNS servers and domains from OpenVPN env vars
+          dns_servers=""
+          dns_domains=""
+          for option in ''${!foreign_option_*}; do
+            value="''${!option}"
+            if [[ $value == "dhcp-option DNS "* ]]; then
+              dns_servers="$dns_servers ''${value#dhcp-option DNS }"
+            elif [[ $value == "dhcp-option DOMAIN "* ]]; then
+              # Add ~ prefix to mark domain for interface-based routing.
+              dns_domains="$dns_domains ~''${value#dhcp-option DOMAIN }"
+            fi
+          done
+
+          # 1. Set the DNS servers for the interface
+          ${pkgs.systemd}/bin/resolvectl dns "$dev" $dns_servers
+          # 2. Disable DNS-over-TLS for this interface
+          ${pkgs.systemd}/bin/resolvectl dnsovertls "$dev" no
+          # 3. Force DNSSEC OFF for this interface
+          ${pkgs.systemd}/bin/resolvectl dnssec "$dev" no
+          # 4. Set the domains for routing
+          ${pkgs.systemd}/bin/resolvectl domain "$dev" $dns_domains
+        '';
+
+        # This script runs when the VPN disconnects with --resolved flag
+        resolvedDownScript = pkgs.writeShellScript "vpn-down-resolved.sh" ''
+          #!${pkgs.runtimeShell}
+          set -x
+          # Cleanly revert all DNS changes made to the interface
+          ${pkgs.systemd}/bin/resolvectl revert "$dev"
+        '';
+      in {
         packages.default = pkgs.writeShellApplication {
           name = "work-vpn";
           runtimeInputs = with pkgs; [
@@ -33,12 +76,16 @@
               PREFIX=""
             fi
 
-            while getopts ":vs-:" opt; do
+            use_resolved=false
+            while getopts ":vrs-:" opt; do
               case "$opt" in
                 v)
                   # Enable shell debugging.
                   set -x
                   verbose=true
+                  ;;
+                r)
+                  use_resolved=true
                   ;;
                 s)
                   staging=true
@@ -49,6 +96,9 @@
                       # Enable shell debugging.
                       set -x
                       verbose=true
+                      ;;
+                    resolved)
+                      use_resolved=true
                       ;;
                     staging)
                       staging=true
@@ -68,7 +118,7 @@
 
             # Bitwarden credentials identifier.
             # This is where the VPN username & password are stored.
-            if [ -z "''\${OPENVPN_BW_ID:-}" ]; then
+            if [ -z "''${OPENVPN_BW_ID:-}" ]; then
               echo "OPENVPN_BW_ID environment variable is not set."
               echo "Store work credentials in Bitwarden and set the UUID in \`.env.local\`."
               exit 2
@@ -87,11 +137,11 @@
               exit 4
             fi
 
-            if [ "''\${staging:-}" = true ]; then
+            if [ "''${staging:-}" = true ]; then
                 OPENVPN_URL="$OPENVPN_URL_STAGE"
             fi
 
-            if [ "''\${verbose:-}" = true ]; then
+            if [ "''${verbose:-}" = true ]; then
               VERB=3
             else
               VERB=0
@@ -136,10 +186,17 @@
             # Only used for debugging.
             verb $VERB
 
-            # Update resolv.conf when connected.
-            # Needed to get internal domains to resolve.
-            up "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"
-            down "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"
+            $(
+              if [ "''${use_resolved:-}" = true ]; then
+                echo '# Update resolv.conf via systemd-resolved.'
+                echo 'up "${resolvedUpScript}"'
+                echo 'down "${resolvedDownScript}"'
+              else
+                echo '# Update resolv.conf when connected.'
+                echo 'up "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"'
+                echo 'down "${pkgs.update-resolv-conf}/libexec/openvpn/update-resolv-conf"'
+              fi
+            )
             script-security 2
 
             # Access Server:
