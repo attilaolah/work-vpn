@@ -19,12 +19,19 @@
             gnused
             openvpn
             rbw
-            sudo
             systemd
             update-resolv-conf
           ];
           text = ''
             set -euo pipefail
+
+            if command -v doas >/dev/null 2>&1; then
+              PREFIX="doas"
+            elif command -v sudo >/dev/null 2>&1; then
+              PREFIX="sudo"
+            else
+              PREFIX=""
+            fi
 
             while getopts ":vs-:" opt; do
               case "$opt" in
@@ -160,7 +167,7 @@
             -----END OpenVPN tls-crypt-v2 client key-----
             </tls-crypt-v2>
             EOF
-              sudo openvpn --config /dev/stdin &
+              $PREFIX openvpn --config /dev/stdin &
             START_PID=$!
 
             # Clean up temporary files.
@@ -192,7 +199,7 @@
             )"
 
             echo "$RESPONSE" |
-              sudo pkexec "${pkgs.systemd}/lib/systemd/systemd-reply-password" 1 "$SOCKET"
+              pkexec "${pkgs.systemd}/lib/systemd/systemd-reply-password" 1 "$SOCKET"
 
             # Give control back to the OpenVPN process:
             wait $START_PID
