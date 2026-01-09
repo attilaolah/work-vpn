@@ -19,7 +19,6 @@
             gnused
             openvpn
             rbw
-            sudo
             systemd
             update-resolv-conf
           ];
