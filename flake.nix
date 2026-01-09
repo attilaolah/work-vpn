@@ -160,9 +160,11 @@
             # Only used for debugging.
             verb $VERB
 
-            up "$UPDOWN"
-            down "$UPDOWN"
-            down-pre  # needed for systemd-resolved only
+            up $UPDOWN
+            down $UPDOWN
+
+            # Needed for systemd-resolved only.
+            down-pre
 
             script-security 2
 
